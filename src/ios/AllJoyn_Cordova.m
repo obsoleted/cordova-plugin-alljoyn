@@ -13,6 +13,7 @@
 // returns true if the handler handled the message. False if not
 // in which case other handlers will have a chance at it
 typedef bool (^MsgHandler)(AJ_Message*);
+typedef void (^MsgAction)();
 
 typedef struct {
     AJ_Status status;
@@ -37,6 +38,8 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 @property Boolean connectedToBus;
 // Used to communicate back to the plugin if we get disconnected
 @property NSString* connectCallbackId;
+
+@property NSMutableArray* OutgoingMessageActions;
 
 // Indicates if there is a callback to the web app in progress
 // This usually means we need to stop processing messages on the loop until it is done
@@ -72,6 +75,9 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
     _dispatchQueue = dispatch_queue_create("org.cordova.plugin.AllJoyn", NULL);
     // Dictionary for method reply handlers
     _MessageHandlers = [NSMutableDictionary dictionaryWithObjectsAndKeys: nil];
+
+    // Array to hold list of actions that are meant to send messages
+    _OutgoingMessageActions = [NSMutableArray new];
 
     [self createDispatcherTimer];
     return self;
@@ -173,7 +179,7 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)startAdvertisingName:(CDVInvokedUrlCommand*)command {
-    [self.commandDelegate runInBackground:^{
+    [[self OutgoingMessageActions] addObject:^{
         NSString* nameToAdvertise = [command argumentAtIndex:0];
         NSNumber* portToHostOn = [command argumentAtIndex:1];
 
@@ -250,7 +256,7 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)stopAdvertisingName:(CDVInvokedUrlCommand*)command {
-    [self.commandDelegate runInBackground:^{
+    [[self OutgoingMessageActions] addObject:^{
         NSString* wellKnownName = [command argumentAtIndex:0 withDefault:nil andClass:[NSString class]];
         NSNumber* port = [command argumentAtIndex:1 withDefault:nil andClass:[NSNumber class]];
 
@@ -602,7 +608,7 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)setSignalRule:(CDVInvokedUrlCommand*)command {
-    [self.commandDelegate runInBackground:^{
+    [[self OutgoingMessageActions] addObject:^{
         NSString* ruleString = [command argumentAtIndex:0];
         NSNumber* ruleType = [command argumentAtIndex:1];
 
@@ -625,7 +631,7 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)joinSession:(CDVInvokedUrlCommand*)command {
-    [self.commandDelegate runInBackground:^{
+    [[self OutgoingMessageActions] addObject:^{
         printf("+joinSessionAsyc\n");
         AJ_Status status = AJ_OK;
         NSDictionary* server = [command argumentAtIndex:0];
@@ -682,7 +688,7 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)leaveSession:(CDVInvokedUrlCommand*) command {
-    [self.commandDelegate runInBackground:^{
+    [[self OutgoingMessageActions] addObject:^{
         NSNumber* sessionId = [command argumentAtIndex:0];
 
         if(![sessionId isKindOfClass:[NSNumber class]]) {
@@ -703,7 +709,8 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 }
 
 -(void)invokeMember:(CDVInvokedUrlCommand*) command {
-    [self.commandDelegate runInBackground:^{
+
+    MsgAction action = ^{
         NSNumber* sessionId = [command argumentAtIndex:0];
         NSString* destination = [command argumentAtIndex:1];
         NSString* signature = [command argumentAtIndex:2];
@@ -869,7 +876,8 @@ uint8_t dbgALLJOYN_CORDOVA = 1;
 
         return;
 
-    }];
+    };
+    [[self OutgoingMessageActions] addObject:action];
 }
 -(Marshal_Status)unmarshalArgumentFor:(AJ_Message*)pMsg withSignature:(NSString*)signature toValues:(NSMutableArray*)values {
     return [self unmarshalArgumentsFor:pMsg withSignature:signature toValues:values limit:1];
@@ -1605,6 +1613,13 @@ AJ_Message _msg;
 
     AJ_Status status = AJ_OK;
     if(![self callbackInProgress]) {
+        // Send any outgoing messages if any
+        while([[self OutgoingMessageActions] count] > 0) {
+            MsgAction action = [[self OutgoingMessageActions] lastObject];
+            action();
+            [[self OutgoingMessageActions] removeLastObject];
+        }
+
         // get next message
         status = AJ_UnmarshalMsg([self busAttachment], &_msg, MSG_TIMEOUT);
 
