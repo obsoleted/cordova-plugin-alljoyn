@@ -1098,7 +1098,7 @@ public class AllJoynCordova extends CordovaPlugin
                     try
                     {
                         Log.i(TAG, "AllJoyn.invokeMember");
-                        long sessionId = data.getLong(0);
+                        long sessionId = data.isNull(0) ? 0 : data.getLong(0);
                         String destination = data.getString(1);
                         String signature = data.getString(2);
                         String path = data.getString(3);
